@@ -1,0 +1,23 @@
+---
+- name: Backup Running Config
+  hosts: routers
+  gather_facts: false
+  connection: network_cli
+  
+  vars:
+    ansible_network_os: cisco.ios.ios
+    ansible_user: admin
+    ansible_password: cisco
+    ansible_connect_timeout: 20
+    
+  tasks:
+    - name: Get running-config
+      cisco.ios.ios_command:
+        commands:
+          - show running-config
+      register: config_output
+
+    - name: Save config to file
+      copy:
+        content: "{{ config_output.stdout[0] }}"
+        dest: "./show_run_{{ student_id }}_{{ inventory_hostname }}.txt"
