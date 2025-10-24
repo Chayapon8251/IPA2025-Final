@@ -2,13 +2,13 @@ import subprocess
 import sys
 import os
 
-# ROUTER_MAP = {
-#     "10.0.15.61": "CSR1KV-Pod1-1",
-#     "10.0.15.62": "CSR1KV-Pod1-2",
-#     "10.0.15.63": "CSR1KV-Pod1-3",
-#     "10.0.15.64": "CSR1KV-Pod1-4",
-#     "10.0.15.65": "CSR1KV-Pod1-5"
-# }
+ROUTER_MAP = {
+    "10.0.15.61": "CSR1KV-Pod1-1",
+    "10.0.15.62": "CSR1KV-Pod1-2",
+    "10.0.15.63": "CSR1KV-Pod1-3",
+    "10.0.15.64": "CSR1KV-Pod1-4",
+    "10.0.15.65": "CSR1KV-Pod1-5"
+}
 
 # def showrun(student_id, router_ip):
     
