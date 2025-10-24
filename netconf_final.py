@@ -1,5 +1,6 @@
 from ncclient import manager
 from lxml import etree
+from ncclient.operations.rpc import RPCError
 
 # ------------------------------
 # ค่าคงที่เชื่อมต่ออุปกรณ์
@@ -282,13 +283,14 @@ def delete_interface(router_ip, student_id: str):
 # ------------------------------
 def set_interface_state(router_ip, student_id: str, enabled: bool):
     """
-    ใช้ native: การปิด/เปิด Loopback ใช้ tag <shutdown/>
+    ใช้ native: <shutdown/> เป็นตัวคุมสถานะ
       - disable: เพิ่ม <shutdown/>
-      - enable: ลบ <shutdown/> ด้วย nc:operation="delete"
+      - enable: ลบ <shutdown/> (ถ้าไม่มีแล้ว ให้ถือว่าสำเร็จ)
+    ทำให้ idempotent: เช็กก่อน-ทำ-เช็กหลัง และ ignore data-missing สำหรับเคส enable
     """
     loop_num, _ = _parse_loop_name(f"Loopback{student_id}")
 
-    # ตรวจสอบก่อน — ถ้าเช็กแล้ว error ให้ “ลองทำต่อ” ได้
+    # 1) Pre-check
     pre = get_interface_status(router_ip, f"Loopback{student_id}")
     if pre == "not_exists":
         return (
@@ -296,50 +298,72 @@ def set_interface_state(router_ip, student_id: str, enabled: bool):
             if enabled
             else f"Cannot shutdown: Interface Loopback{student_id}"
         )
+    if enabled and pre == "exists_enabled":
+        return f"Interface Loopback{student_id} is enabled successfully using Netconf (already)"
+    if (not enabled) and pre == "exists_disabled":
+        return f"Interface Loopback{student_id} is shutdowned successfully using Netconf (already)"
 
     conn = get_netconf_connection(router_ip)
     if not conn:
         return "Error: NETCONF Connection Failed"
 
-    if enabled:
-        # delete 'shutdown'
-        config_xml = f"""
-        <config>
-          <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native"
-                  xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
-            <interface>
-              <Loopback>
-                <name>{loop_num}</name>
-                <shutdown nc:operation="delete"/>
-              </Loopback>
-            </interface>
-          </native>
-        </config>
-        """
-    else:
-        # add 'shutdown'
-        config_xml = f"""
-        <config>
-          <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native">
-            <interface>
-              <Loopback>
-                <name>{loop_num}</name>
-                <shutdown/>
-              </Loopback>
-            </interface>
-          </native>
-        </config>
-        """
-
     try:
-        rep = conn.edit_config(target="running", config=config_xml, default_operation="merge")
-        if rep.ok:
-            if enabled:
-                return f"Interface Loopback{student_id} is enabled successfully using Netconf"
-            else:
-                return f"Interface Loopback{student_id} is shutdowned successfully using Netconf"
+        if enabled:
+            # ลบ shutdown ถ้ามี; ถ้าไม่มีแล้ว บางรุ่นจะตอบ data-missing — ให้มองว่าโอเค
+            config_xml = f"""
+            <config>
+              <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native"
+                      xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0">
+                <interface>
+                  <Loopback>
+                    <name>{loop_num}</name>
+                    <shutdown nc:operation="delete"/>
+                  </Loopback>
+                </interface>
+              </native>
+            </config>
+            """
+            try:
+                _ = conn.edit_config(
+                    target="running",
+                    config=config_xml,
+                    default_operation="merge",
+                )
+            except RPCError as e:
+                # ถ้าลบไม่เจอ (data-missing) ให้ถือว่าสำเร็จ เพราะมัน "เปิด" อยู่แล้ว
+                if getattr(e, "tag", None) != "data-missing":
+                    raise
+
         else:
-            return f"Error: Router rejected config for Loopback{student_id}."
+            # ปิด: ใส่ shutdown (merge ได้ตลอด)
+            config_xml = f"""
+            <config>
+              <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native">
+                <interface>
+                  <Loopback>
+                    <name>{loop_num}</name>
+                    <shutdown/>
+                  </Loopback>
+                </interface>
+              </native>
+            </config>
+            """
+            _ = conn.edit_config(
+                target="running",
+                config=config_xml,
+                default_operation="merge",
+            )
+
+        # 3) Post-check ยืนยันผล
+        post = get_interface_status(router_ip, f"Loopback{student_id}")
+        if enabled and post == "exists_enabled":
+            return f"Interface Loopback{student_id} is enabled successfully using Netconf"
+        if (not enabled) and post == "exists_disabled":
+            return f"Interface Loopback{student_id} is shutdowned successfully using Netconf"
+
+        # ถ้าผลตรวจหลังทำไม่ตรง เปลี่ยนไปแจ้ง error พร้อมใบ้สถานะจริง
+        return f"NETCONF set_interface_state Warning: final state = {post}"
+
     except Exception as e:
         return f"NETCONF set_interface_state Error: {e}"
     finally:
