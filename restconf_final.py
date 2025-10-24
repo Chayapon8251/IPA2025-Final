@@ -81,11 +81,11 @@ def create_interface(router_ip, student_id):
     try:
         response = requests.post(url, headers=headers, auth=auth, data=json.dumps(payload), verify=False)
         if response.status_code == 201: # 201 Created
-            return f"Interface {interface_name} is created successfully"
+            return f"Interface {interface_name} is created successfully using Restconf"
         else:
             return f"Failed to create. Status: {response.status_code}, Body: {response.text}"
     except requests.exceptions.RequestException as e:
-        return f"Error creating interface: {e}"
+        return f"Error creating interface (Restconf): {e}"
 
 def delete_interface(router_ip, student_id):
     """ลบ Loopback interface"""
@@ -105,11 +105,11 @@ def delete_interface(router_ip, student_id):
         response = requests.delete(url, headers=headers, auth=auth, verify=False)
         
         if response.status_code == 204: # 204 No Content (คือสำเร็จ)
-            return f"Interface {interface_name} is deleted successfully"
+            return f"Interface {interface_name} is deleted successfully using Restconf"
         else:
             return f"Delete failed: {response.status_code} {response.text}"
     except requests.exceptions.RequestException as e:
-        return f"Error deleting interface: {e}"
+        return f"Error deleting interface (Restconf): {e}"
 
 
 def set_interface_state(router_ip, student_id, enabled: bool):
@@ -137,9 +137,9 @@ def set_interface_state(router_ip, student_id, enabled: bool):
         
         if response.status_code == 204: # 204 No Content (คือสำเร็จ)
             if enabled:
-                return f"Interface {interface_name} is enabled successfully"
+                return f"Interface {interface_name} is enabled successfully using Restconf"
             else:
-                return f"Interface {interface_name} is shutdowned successfully"
+                return f"Interface {interface_name} is shutdowned successfully using Restconf"
         else:
             return f"Set state failed: {response.status_code} {response.text}"
     except requests.exceptions.RequestException as e:

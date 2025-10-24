@@ -1,88 +1,189 @@
 from ncclient import manager
-import xmltodict
+from ncclient.xml_ import new_ele, sub_ele
 
-m = manager.connect(
-    host="<!!!REPLACEME with router IP address!!!>",
-    port=<!!!REPLACEME with NETCONF Port number!!!>,
-    username="admin",
-    password="cisco",
-    hostkey_verify=False
-    )
+# ข้อมูลเชื่อมต่อ
+ROUTER_USER = "admin"
+ROUTER_PASS = "cisco"
+ROUTER_PORT = 830 # Port มาตรฐานของ NETCONF
 
-def create():
-    netconf_config = """<!!!REPLACEME with YANG data!!!>"""
-
+def get_netconf_connection(router_ip):
+    """สร้างการเชื่อมต่อ NETCONF"""
     try:
-        netconf_reply = netconf_edit_config(netconf_config)
-        xml_data = netconf_reply.xml
-        print(xml_data)
-        if '<ok/>' in xml_data:
-            return "<!!!REPLACEME with proper message!!!>"
-    except:
-        print("Error!")
+        conn = manager.connect(
+            host=router_ip,
+            port=ROUTER_PORT,
+            username=ROUTER_USER,
+            password=ROUTER_PASS,
+            hostkey_verify=False, # ปิดการตรวจสอบ Hostkey
+            device_params={'name': 'csr'},
+            timeout=15
+        )
+        return conn
+    except Exception as e:
+        print(f"NETCONF Connection Error: {e}")
+        return None
 
-
-def delete():
-    netconf_config = """<!!!REPLACEME with YANG data!!!>"""
-
+def get_interface_status(router_ip, interface_name):
+    """ตรวจสอบสถานะ Interface (NETCONF) - (เวอร์ชันแก้ไข Bug)"""
+    
+    # 1. สร้าง XML Filter เพื่อขอข้อมูลเฉพาะ Interface นี้
+    interface_filter = f"""
+    <filter>
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+        <interface>
+          <name>{interface_name}</name>
+        </interface>
+      </interfaces>
+    </filter>
+    """
+    
+    conn = get_netconf_connection(router_ip)
+    if not conn:
+        return "error"
+        
     try:
-        netconf_reply = netconf_edit_config(netconf_config)
-        xml_data = netconf_reply.xml
-        print(xml_data)
-        if '<ok/>' in xml_data:
-            return "<!!!REPLACEME with proper message!!!>"
-    except:
-        print("Error!")
+        # 2. ส่ง <get-config>
+        reply_str = conn.get_config(source='running', filter=interface_filter).data_xml
+        
+        # --- 3. นี่คือ Logic ที่แก้ไขแล้ว ---
+        
+        # 3.1 เช็คว่ามี Interface นี้อยู่หรือไม่ (เช็คจาก name)
+        if f"<name>{interface_name}</name>" in reply_str:
+            # 3.2 ถ้ามี, ค่อยเช็คว่ามัน enabled หรือ disabled
+            if "<enabled>true</enabled>" in reply_str:
+                return "exists_enabled"
+            else:
+                return "exists_disabled"
+        else:
+            # 3.3 ถ้าไม่เจอ name, ก็คือ "not_exists"
+            return "not_exists"
+            
+    except Exception as e:
+        print(f"NETCONF get_interface_status Error: {e}")
+        return "error"
+    finally:
+        if conn:
+            conn.close_session()
 
+def create_interface(router_ip, student_id):
+    """สร้าง Loopback Interface (NETCONF)"""
+    interface_name = f"Loopback{student_id}"
+    
+    # 1. ตรวจสอบก่อน (ใช้ฟังก์ชันของตัวเอง)
+    status = get_interface_status(router_ip, interface_name)
+    if status != "not_exists":
+        return f"Cannot create: Interface {interface_name}"
 
-def enable():
-    netconf_config = """<!!!REPLACEME with YANG data!!!>"""
-
+    # 2. คำนวณ IP
+    last_3_digits = student_id[-3:]
+    x = int(last_3_digits[0])
+    y = int(last_3_digits[1:])
+    ip_address = f"172.{x}.{y}.1"
+    
+    # 3. สร้าง XML Payload
+    config_xml = f"""
+    <config>
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+        <interface>
+          <name>{interface_name}</name>
+          <type xmlns:ianaift="urn:ietf:params:xml:ns:yang:iana-if-type">ianaift:softwareLoopback</type>
+          <enabled>true</enabled>
+          <ipv4 xmlns="urn:ietf:params:xml:ns:yang:ietf-ip">
+            <address>
+              <ip>{ip_address}</ip>
+              <netmask>255.255.255.0</netmask>
+            </address>
+          </ipv4>
+        </interface>
+      </interfaces>
+    </config>
+    """
+    
+    conn = get_netconf_connection(router_ip)
+    if not conn:
+        return "Error: NETCONF Connection Failed"
+        
     try:
-        netconf_reply = netconf_edit_config(netconf_config)
-        xml_data = netconf_reply.xml
-        print(xml_data)
-        if '<ok/>' in xml_data:
-            return "<!!!REPLACEME with proper message!!!>"
-    except:
-        print("Error!")
+        # 4. ส่ง <edit-config>
+        conn.edit_config(target='running', config=config_xml, default_operation='merge')
+        return f"Interface {interface_name} is created successfully using Netconf"
+    except Exception as e:
+        return f"NETCONF create_interface Error: {e}"
+    finally:
+        if conn:
+            conn.close_session()
 
+def delete_interface(router_ip, student_id):
+    """ลบ Loopback Interface (NETCONF)"""
+    interface_name = f"Loopback{student_id}"
+    
+    # 1. ตรวจสอบก่อน
+    status = get_interface_status(router_ip, interface_name)
+    if status == "not_exists":
+        return f"Cannot delete: Interface {interface_name}"
 
-def disable():
-    netconf_config = """<!!!REPLACEME with YANG data!!!>"""
-
+    # 2. สร้าง XML Payload สำหรับลบ
+    config_xml = f"""
+    <config>
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+        <interface operation="delete">
+          <name>{interface_name}</name>
+        </interface>
+      </interfaces>
+    </config>
+    """
+    
+    conn = get_netconf_connection(router_ip)
+    if not conn:
+        return "Error: NETCONF Connection Failed"
+        
     try:
-        netconf_reply = netconf_edit_config(netconf_config)
-        xml_data = netconf_reply.xml
-        print(xml_data)
-        if '<ok/>' in xml_data:
-            return "<!!!REPLACEME with proper message!!!>"
-    except:
-        print("Error!")
+        # 3. ส่ง <edit-config>
+        conn.edit_config(target='running', config=config_xml)
+        return f"Interface {interface_name} is deleted successfully using Netconf"
+    except Exception as e:
+        return f"NETCONF delete_interface Error: {e}"
+    finally:
+        if conn:
+            conn.close_session()
 
-def netconf_edit_config(netconf_config):
-    return  m.<!!!REPLACEME with the proper Netconf operation!!!>(target="<!!!REPLACEME with NETCONF Datastore!!!>", config=<!!!REPLACEME with netconf_config!!!>)
-
-
-def status():
-    netconf_filter = """<!!!REPLACEME with YANG data!!!>"""
-
+def set_interface_state(router_ip, student_id, enabled: bool):
+    """Enable/Disable Interface (NETCONF)"""
+    interface_name = f"Loopback{student_id}"
+    
+    # 1. ตรวจสอบก่อน
+    status = get_interface_status(router_ip, interface_name)
+    if status == "not_exists":
+        if enabled:
+            return f"Cannot enable: Interface {interface_name}"
+        else:
+            return f"Cannot shutdown: Interface {interface_name}"
+            
+    # 2. สร้าง XML Payload
+    config_xml = f"""
+    <config>
+      <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+        <interface>
+          <name>{interface_name}</name>
+          <enabled>{'true' if enabled else 'false'}</enabled>
+        </interface>
+      </interfaces>
+    </config>
+    """
+    
+    conn = get_netconf_connection(router_ip)
+    if not conn:
+        return "Error: NETCONF Connection Failed"
+        
     try:
-        # Use Netconf operational operation to get interfaces-state information
-        netconf_reply = m.<!!!REPLACEME with the proper Netconf operation!!!>(filter=<!!!REPLACEME with netconf_filter!!!>)
-        print(netconf_reply)
-        netconf_reply_dict = xmltodict.<!!!REPLACEME with the proper method!!!>(netconf_reply.xml)
-
-        # if there data return from netconf_reply_dict is not null, the operation-state of interface loopback is returned
-        if <!!!REPLACEME with the proper condition!!!>:
-            # extract admin_status and oper_status from netconf_reply_dict
-            admin_status = <!!!REPLACEME!!!>
-            oper_status = <!!!REPLACEME !!!>
-            if admin_status == 'up' and oper_status == 'up':
-                return "<!!!REPLACEME with proper message!!!>"
-            elif admin_status == 'down' and oper_status == 'down':
-                return "<!!!REPLACEME with proper message!!!>"
-        else: # no operation-state data
-            return "<!!!REPLACEME with proper message!!!>"
-    except:
-       print("Error!")
+        # 3. ส่ง <edit-config>
+        conn.edit_config(target='running', config=config_xml, default_operation='merge')
+        if enabled:
+            return f"Interface {interface_name} is enabled successfully using Netconf"
+        else:
+            return f"Interface {interface_name} is shutdowned successfully using Netconf"
+    except Exception as e:
+        return f"NETCONF set_interface_state Error: {e}"
+    finally:
+        if conn:
+            conn.close_session()
