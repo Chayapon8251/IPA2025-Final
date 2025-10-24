@@ -79,11 +79,15 @@ def create_interface(router_ip, student_id):
     }
 
     try:
-        response = requests.post(url, headers=headers, auth=auth, data=json.dumps(payload), verify=False)
+        response = requests.post(url, ...) # (คำสั่งเดิม)
+        # --- (แก้ไข!) ---
         if response.status_code == 201: # 201 Created
             return f"Interface {interface_name} is created successfully using Restconf"
         else:
-            return f"Failed to create. Status: {response.status_code}, Body: {response.text}"
+            # 4.2 ถ้าไม่สำเร็จ
+            print(f"RESTCONF create_interface Error: {response.text}")
+            return f"Error: Router rejected config ({response.status_code}) for {interface_name}."
+        # --- (จบส่วนแก้ไข) ---
     except requests.exceptions.RequestException as e:
         return f"Error creating interface (Restconf): {e}"
 

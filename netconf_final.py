@@ -100,15 +100,23 @@ def create_interface(router_ip, student_id):
     """
     
     conn = get_netconf_connection(router_ip)
+
     if not conn:
         return "Error: NETCONF Connection Failed"
         
     try:
-        # 4. ส่ง <edit-config>
-        conn.edit_config(target='running', config=config_xml, default_operation='merge')
-        return f"Interface {interface_name} is created successfully using Netconf"
+        # --- (แก้ไข!) ---
+        reply = conn.edit_config(target='running', config=config_xml, default_operation='merge')
+        reply_str = str(reply)
+
+        if reply.ok:
+            return f"Interface {interface_name} is created successfully using Netconf"
+        else:
+            print(f"NETCONF create_interface Error: Router rejected config. Reply: {reply_str}")
+            return f"Error: Router rejected config for {interface_name}."
+        # --- (จบส่วนแก้ไข) ---
     except Exception as e:
-        return f"NETCONF create_interface Error: {e}"
+        return f"NETCONF create_interface Exception: {e}"
     finally:
         if conn:
             conn.close_session()
@@ -138,9 +146,16 @@ def delete_interface(router_ip, student_id):
         return "Error: NETCONF Connection Failed"
         
     try:
-        # 3. ส่ง <edit-config>
-        conn.edit_config(target='running', config=config_xml)
-        return f"Interface {interface_name} is deleted successfully using Netconf"
+        # --- (แก้ไข!) ---
+        reply = conn.edit_config(target='running', config=config_xml)
+        reply_str = str(reply)
+
+        if reply.ok:
+            return f"Interface {interface_name} is deleted successfully using Netconf"
+        else:
+            print(f"NETCONF delete_interface Error: Router rejected config. Reply: {reply_str}")
+            return f"Error: Router rejected config for {interface_name}."
+        # --- (จบส่วนแก้ไข) ---
     except Exception as e:
         return f"NETCONF delete_interface Error: {e}"
     finally:
@@ -176,12 +191,19 @@ def set_interface_state(router_ip, student_id, enabled: bool):
         return "Error: NETCONF Connection Failed"
         
     try:
-        # 3. ส่ง <edit-config>
-        conn.edit_config(target='running', config=config_xml, default_operation='merge')
-        if enabled:
-            return f"Interface {interface_name} is enabled successfully using Netconf"
+        # --- (แก้ไข!) ---
+        reply = conn.edit_config(target='running', config=config_xml, default_operation='merge')
+        reply_str = str(reply)
+
+        if reply.ok:
+            if enabled:
+                return f"Interface {interface_name} is enabled successfully using Netconf"
+            else:
+                return f"Interface {interface_name} is shutdowned successfully using Netconf"
         else:
-            return f"Interface {interface_name} is shutdowned successfully using Netconf"
+            print(f"NETCONF set_interface_state Error: Router rejected config. Reply: {reply_str}")
+            return f"Error: Router rejected config for {interface_name}."
+        # --- (จบส่วนแก้ไข) ---
     except Exception as e:
         return f"NETCONF set_interface_state Error: {e}"
     finally:
