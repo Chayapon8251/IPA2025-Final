@@ -147,3 +147,4 @@ def write_motd(student_id: str, ip: str, message: str) -> str:
         return f"Error: {res2.stderr.strip() or res2.stdout.strip()}"
     except Exception as e2:
         return f"Error: {str(e2)}"
+    

@@ -81,6 +81,10 @@ try:
             for msg in reversed(new_messages):
                 print(f"\nNew message detected: {msg.text}")
                 
+                if not msg.text:
+                    print("Skipping message with no text content.")
+                    continue
+                    
                 cleaned_text = msg.text.strip()
                 # --- (Logic เดิมในการ Parse และ Filter) ---
                 if not cleaned_text.startswith("/"):
