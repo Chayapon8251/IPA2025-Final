@@ -1,89 +1,69 @@
-from netmiko import ConnectHandler
-from netmiko.exceptions import NetmikoTimeoutException  # <--- 1. Import Error นี้เข้ามา
-from pprint import pprint
 import re
+from netmiko import ConnectHandler
 
-username = "admin"
-password = "cisco"
+ROUTER_USER = "admin"
+ROUTER_PASS = "cisco"
+DEVICE_TYPE = "cisco_ios"
 
+def _connect(ip: str):
+    return ConnectHandler(
+        device_type=DEVICE_TYPE,
+        host=ip,
+        username=ROUTER_USER,
+        password=ROUTER_PASS,
+        # secret=ROUTER_PASS,  # ถ้าต้อง enter enable ให้ uncomment
+        fast_cli=False,
+    )
 
-def read_motd(router_ip):
-    """อ่าน MOTD Banner (Netmiko)"""
-    device_params = {
-        "device_type": "cisco_xe", 
-        "ip": router_ip,
-        "username": username,
-        "password": password,
-        "conn_timeout": 20
-    }
-    
+def _parse_banner_from_run(run_text: str):
+    """
+    ดึงข้อความ banner motd จาก show running-config
+    รูปแบบทั่วไป:
+      banner motd ^<ข้อความหลายบรรทัด>^
+    หรือใช้ delimiter ตัวอื่น เช่น @, #, $, !
+    """
+    # หา 'banner motd <delim>...<delim>' แบบ DOTALL
+    m = re.search(r"^banner\s+motd\s+(\S)\n?(.*?)\1\s*$",
+                  run_text, flags=re.MULTILINE | re.DOTALL)
+    if not m:
+        # บางเครื่องอาจขึ้นบรรทัดเดียว: banner motd ^ข้อความ^
+        m = re.search(r"^banner\s+motd\s+(\S)(.*?)\1\s*$",
+                      run_text, flags=re.MULTILINE | re.DOTALL)
+    if not m:
+        return None
+
+    body = m.group(2)
+    # ทำความสะอาด CR/LF และช่องว่างส่วนเกินหัว-ท้าย
+    body = body.replace("\r", "")
+    body = body.strip("\n")
+    return body.strip()
+
+def read_motd(ip: str) -> str:
+    """
+    คืนค่า:
+      - ข้อความ MOTD (string) เมื่อพบ
+      - "Error: No MOTD Configured" เมื่อไม่พบ
+      - "Error: <รายละเอียด>" เมื่อมีข้อผิดพลาด
+    """
     try:
-        with ConnectHandler(**device_params) as ssh:
-            # 1. ดึง config ส่วน banner motd
-            # เราใช้ 'show run | section' จะได้ผลลัพธ์ที่สะอาดกว่า
-            result = ssh.send_command("show running-config | section banner motd")
-            
-            # 2. ค้นหาข้อความระหว่างตัวคั่น (เช่น ^C ... ^C)
-            # 's' flag (re.DOTALL) ทำให้ '.' จับคู่ newline (เผื่อ MOTD หลายบรรทัด)
-            match = re.search(r'banner motd \^(.*?)\^', result, re.DOTALL)
-            
-            if match:
-                # 3. ถ้าเจอ ให้คืนค่าข้อความที่อยู่ข้างใน (กลุ่มที่ 1)
-                message = match.group(1).strip() # .strip() เพื่อลบช่องว่าง/newline หน้า-หลัง
-                return message
-            else:
-                # 4. ถ้าไม่เจอ (ไม่มี MOTD)
-                return None
-       
-    except NetmikoTimeoutException:  # <--- 3. ดักจับ Error ถ้า Timeout
-        print(f"ERROR: Connection timed out to {router_ip}")
-        # คืนค่าเป็น String Error (Bot หลักจะเอาไปส่งใน Webex)
-        return f"Error: Connection timed out to {router_ip}"
-    except Exception as e:  # <--- 4. ดักจับ Error อื่นๆ (เผื่อไว้)
-        print(f"ERROR: An unknown error occurred: {e}")
-        return f"Error: An unknown error occurred: {e}"
+        conn = _connect(ip)
+        # ถ้ามี enable: conn.enable()
 
-# def gigabit_status(router_ip):
-    
-#     device_params = {
-#         "device_type": "cisco_xe", 
-#         "ip": router_ip,
-#         "username": username,
-#         "password": password,
-#         "conn_timeout": 15
-#     }
-    
-#     try:  # <--- 2. เริ่ม try คลุมทั้งหมด
-#         ans = ""
-#         with ConnectHandler(**device_params) as ssh:
-#             up = 0
-#             down = 0
-#             admin_down = 0
-            
-#             result = ssh.send_command("show interfaces", use_textfsm=True)
-            
-#             for status in result:
-#                 if 'GigabitEthernet' in status['interface']:
-#                     interface_name = status['interface']
-#                     link_status = status['link_status']
-#                     protocol_status = status['protocol_status']
-                    
-#                     status_str = ""
-                    
-#                     if link_status == "up" and protocol_status == "up":
-#                         status_str = "up"
-#                         up += 1
-#                     elif link_status == "administratively down":
-#                         status_str = "administratively down"
-#                         admin_down += 1
-#                     else: 
-#                         status_str = "down"
-#                         down += 1
-                    
-#                     ans += f"{interface_name} {status_str}, "
+        # 1) ลอง show banner motd (ถ้ามีจะตอบข้อความตรง ๆ)
+        out = conn.send_command("show banner motd", expect_string=r"#|\$")
+        if out and "No banner configured" not in out and "% No" not in out:
+            # ทำความสะอาด
+            msg = out.strip()
+            # บางรุ่นอาจใส่ prompt ปิดท้าย ตัดบรรทัด prompt ออกถ้าจำเป็น
+            return msg
 
-#             ans = ans.strip(', ')
-#             ans += f" -> {up} up, {down} down, {admin_down} administratively down"
-            
-#             pprint(ans)
-#             return ans
+        # 2) fallback: อ่านจาก show running-config แล้ว regex เอาเฉพาะตัวข้อความ
+        run = conn.send_command("show running-config", expect_string=r"#|\$", delay_factor=2)
+        motd = _parse_banner_from_run(run)
+        if motd:
+            return motd
+
+        return "Error: No MOTD Configured"
+
+    except Exception as e:
+        return f"Error: {e}"
